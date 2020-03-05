@@ -2,9 +2,14 @@ package morse
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/faiface/beep"
+	"github.com/faiface/beep/speaker"
 )
 
 // https://en.wikipedia.org/wiki/Morse_code
@@ -16,6 +21,16 @@ type Duration string
 const (
 	Dit Duration = "•" // short
 	Dah Duration = "−" // long
+)
+
+// constants for beep sounds
+const (
+	hz  = 800
+	wpm = 10
+
+	durationShort = 1200 / wpm
+	durationLong  = durationShort * 3
+	durationGap   = durationShort * 2
 )
 
 // Code for morse code strings
@@ -201,6 +216,45 @@ func Decodable(codes []Code) (decodable bool, err error) {
 // Escape returns `text` with non-encodable characters and redundant spaces removed/replaced.
 func Escape(text string) string {
 	return regexRedundantSpaces.ReplaceAllString(regexToEscape.ReplaceAllString(text, ""), " ")
+}
+
+// Beep plays sounds for given `codes` synchronously.
+func Beep(codes []Code) {
+	sr := beep.SampleRate(44100)
+	speaker.Init(sr, sr.N(time.Second/100))
+
+	done := make(chan bool)
+	for i, code := range codes {
+		if i > 0 {
+			time.Sleep(durationGap * time.Millisecond)
+		}
+
+		for _, chr := range code {
+			var duration int
+			switch Duration(chr) {
+			case Dit:
+				duration = durationShort
+			case Dah:
+				duration = durationLong
+			}
+
+			speaker.Play(beep.Seq(beep.Take(sr.N(time.Duration(duration)*time.Millisecond), beeper()), beep.Callback(func() {
+				done <- true
+			})))
+			<-done
+		}
+	}
+}
+
+// beep sound stream
+func beeper() beep.Streamer {
+	return beep.StreamerFunc(func(samples [][2]float64) (n int, ok bool) {
+		for i := range samples {
+			samples[i][0] = math.Sin(float64(i) * math.Pi * 2 * hz / 44100)
+			samples[i][1] = math.Sin(float64(i) * math.Pi * 2 * hz / 44100)
+		}
+		return len(samples), true
+	})
 }
 
 // converts given character to a morse code.
